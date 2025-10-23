@@ -1,0 +1,242 @@
+-- supabase_migration.txt
+-- SQL-script til opsætning af 'profiles' og 'notes' tabeller og sikkerhedsregler i Supabase.
+-- Kør dette i din Supabase SQL Editor for at sætte databasen op.
+-- Scriptet er idempotent, hvilket betyder, at det kan køres flere gange uden at forårsage fejl.
+
+-- -----------------------------------------------------------------------------
+-- Generel Funktion til Timestamps
+-- -----------------------------------------------------------------------------
+
+-- Denne funktion kan genbruges af flere triggers til at opdatere 'updated_at' feltet.
+CREATE OR REPLACE FUNCTION public.handle_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- -----------------------------------------------------------------------------
+-- Profiles Tabel Opsætning
+-- -----------------------------------------------------------------------------
+
+-- TRIN 1: Opret 'profiles' tabellen (hvis den ikke findes).
+CREATE TABLE IF NOT EXISTS public.profiles (
+  id uuid NOT NULL PRIMARY KEY,
+  display_name text,
+  is_premium boolean DEFAULT false,
+  CONSTRAINT profiles_id_fkey FOREIGN KEY (id) REFERENCES auth.users(id) ON DELETE CASCADE
+);
+
+-- TRIN 2: Tilføj 'updated_at' kolonnen til 'profiles', hvis den mangler.
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS updated_at timestamp with time zone DEFAULT now();
+
+-- Tilføj kommentarer til tabellen og kolonnerne for klarhed.
+COMMENT ON TABLE public.profiles IS 'Gemmer offentlige brugerprofiler.';
+COMMENT ON COLUMN public.profiles.id IS 'Reference til auth.users.id';
+
+-- TRIN 3: Opsæt Row Level Security (RLS) for 'profiles' tabellen
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+
+-- TRIN 4: Opret sikkerhedsregler (Policies) for 'profiles'
+DROP POLICY IF EXISTS "Brugere kan oprette deres egen profil" ON public.profiles;
+CREATE POLICY "Brugere kan oprette deres egen profil"
+ON public.profiles FOR INSERT
+WITH CHECK (auth.uid() = id);
+
+DROP POLICY IF EXISTS "Brugere kan se deres egen profil" ON public.profiles;
+CREATE POLICY "Brugere kan se deres egen profil"
+ON public.profiles FOR SELECT
+USING (auth.uid() = id);
+
+DROP POLICY IF EXISTS "Brugere kan opdatere deres egen profil" ON public.profiles;
+CREATE POLICY "Brugere kan opdatere deres egen profil"
+ON public.profiles FOR UPDATE
+USING (auth.uid() = id)
+WITH CHECK (auth.uid() = id);
+
+-- TRIN 5: Opret en trigger for at opdatere 'updated_at' på 'profiles'
+DROP TRIGGER IF EXISTS on_profiles_updated ON public.profiles;
+CREATE TRIGGER on_profiles_updated
+BEFORE UPDATE ON public.profiles
+FOR EACH ROW
+EXECUTE PROCEDURE public.handle_updated_at();
+
+-- -----------------------------------------------------------------------------
+-- Categories Tabel Opsætning (NY)
+-- -----------------------------------------------------------------------------
+
+-- TRIN 6: Opret 'categories' tabellen for brugerdefinerede kategorier
+CREATE TABLE IF NOT EXISTS public.categories (
+  id uuid NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id uuid NOT NULL,
+  name text NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT categories_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE,
+  -- Sikrer at en bruger ikke kan have to kategorier med samme navn
+  CONSTRAINT categories_user_id_name_key UNIQUE (user_id, name)
+);
+
+-- Tilføj kommentarer
+COMMENT ON TABLE public.categories IS 'Gemmer brugerdefinerede note-kategorier.';
+
+-- TRIN 7: Opsæt RLS for 'categories' tabellen
+ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
+
+-- TRIN 8: Opret sikkerhedsregler (Policies) for 'categories'
+DROP POLICY IF EXISTS "Brugere kan se deres egne kategorier" ON public.categories;
+CREATE POLICY "Brugere kan se deres egne kategorier"
+ON public.categories FOR SELECT
+USING (user_id = auth.uid());
+
+DROP POLICY IF EXISTS "Brugere kan oprette kategorier" ON public.categories;
+CREATE POLICY "Brugere kan oprette kategorier"
+ON public.categories FOR INSERT
+WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS "Brugere kan opdatere egne kategorier" ON public.categories;
+CREATE POLICY "Brugere kan opdatere egne kategorier"
+ON public.categories FOR UPDATE
+USING (user_id = auth.uid());
+
+DROP POLICY IF EXISTS "Brugere kan slette egne kategorier" ON public.categories;
+CREATE POLICY "Brugere kan slette egne kategorier"
+ON public.categories FOR DELETE
+USING (user_id = auth.uid());
+
+-- -----------------------------------------------------------------------------
+-- Notes Tabel Opdatering
+-- -----------------------------------------------------------------------------
+
+-- TRIN 9: Opret 'notes' tabellen (hvis den ikke findes).
+CREATE TABLE IF NOT EXISTS public.notes (
+  id uuid NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id uuid NOT NULL,
+  title text NOT NULL,
+  category text,
+  excerpt text,
+  content text,
+  color text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT notes_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE
+);
+
+-- TRIN 10: Juster kolonner for at matche ny struktur
+ALTER TABLE public.notes DROP COLUMN IF EXISTS subject; -- Fjern forældet kolonne
+ALTER TABLE public.notes ADD COLUMN IF NOT EXISTS category text; -- Sørg for at 'category' kolonnen eksisterer
+ALTER TABLE public.notes ADD COLUMN IF NOT EXISTS excerpt text; -- KRITISK RETTELSE: Sørg for at 'excerpt' kolonnen eksisterer
+ALTER TABLE public.notes ADD COLUMN IF NOT EXISTS color text; -- KRITISK RETTELSE: Sørg for at 'color' kolonnen eksisterer
+ALTER TABLE public.notes ADD COLUMN IF NOT EXISTS updated_at timestamp with time zone DEFAULT now();
+ALTER TABLE public.notes ADD COLUMN IF NOT EXISTS tags text[] DEFAULT ARRAY[]::text[];
+
+-- Tilføj kommentarer
+COMMENT ON TABLE public.notes IS 'Gemmer brugerspecifikke noter.';
+COMMENT ON COLUMN public.notes.user_id IS 'Reference til auth.users.id for ejerskab.';
+COMMENT ON COLUMN public.notes.tags IS 'En liste af tags/emneord for noten.';
+COMMENT ON COLUMN public.notes.category IS 'Kategorien eller faget for noten.';
+
+-- TRIN 11: Trigger til automatisk at opdatere 'updated_at' for noter
+DROP TRIGGER IF EXISTS on_notes_updated ON public.notes;
+CREATE TRIGGER on_notes_updated
+BEFORE UPDATE ON public.notes
+FOR EACH ROW
+EXECUTE PROCEDURE public.handle_updated_at();
+
+-- TRIN 12: Opsæt RLS for 'notes' tabellen
+ALTER TABLE public.notes ENABLE ROW LEVEL SECURITY;
+
+-- TRIN 13: Opret sikkerhedsregler (Policies) for 'notes'
+DROP POLICY IF EXISTS "Brugere kan se egne noter" ON public.notes;
+CREATE POLICY "Brugere kan se egne noter"
+ON public.notes FOR SELECT
+USING (user_id = auth.uid());
+
+DROP POLICY IF EXISTS "Brugere kan indsætte noter" ON public.notes;
+CREATE POLICY "Brugere kan indsætte noter"
+ON public.notes FOR INSERT
+WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS "Brugere kan opdatere egne noter" ON public.notes;
+CREATE POLICY "Brugere kan opdatere egne noter"
+ON public.notes FOR UPDATE
+USING (user_id = auth.uid());
+
+DROP POLICY IF EXISTS "Brugere kan slette egne noter" ON public.notes;
+CREATE POLICY "Brugere kan slette egne noter"
+ON public.notes FOR DELETE
+USING (user_id = auth.uid());
+
+-- TRIN 14: Tilføj nødvendige indekser for bedre performance
+CREATE INDEX IF NOT EXISTS notes_user_id_idx ON notes(user_id);
+CREATE INDEX IF NOT EXISTS notes_updated_at_idx ON notes(updated_at DESC);
+CREATE INDEX IF NOT EXISTS categories_user_id_idx ON categories(user_id);
+
+-- -----------------------------------------------------------------------------
+-- Progress Logs Tabel Opsætning
+-- -----------------------------------------------------------------------------
+
+-- TRIN 15: Opret 'progress_logs' tabellen (hvis den ikke findes)
+CREATE TABLE IF NOT EXISTS public.progress_logs (
+  id uuid NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id uuid NOT NULL,
+  date date NOT NULL,
+  minutes integer NOT NULL DEFAULT 0,
+  notes_created integer NOT NULL DEFAULT 0,
+  quizzes_done integer NOT NULL DEFAULT 0,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT progress_logs_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE,
+  CONSTRAINT progress_logs_user_id_date_key UNIQUE (user_id, date)
+);
+
+-- Tilføj kommentarer
+COMMENT ON TABLE public.progress_logs IS 'Logger daglig studieprogression for brugere.';
+
+-- TRIN 16: Opsæt RLS for 'progress_logs' tabellen
+ALTER TABLE public.progress_logs ENABLE ROW LEVEL SECURITY;
+
+-- TRIN 17: Opret sikkerhedsregler (Policies) for 'progress_logs'
+DROP POLICY IF EXISTS "Brugere kan se egne progressionslogs" ON public.progress_logs;
+CREATE POLICY "Brugere kan se egne progressionslogs"
+ON public.progress_logs FOR SELECT
+USING (user_id = auth.uid());
+
+DROP POLICY IF EXISTS "Brugere kan oprette egne progressionslogs" ON public.progress_logs;
+CREATE POLICY "Brugere kan oprette egne progressionslogs"
+ON public.progress_logs FOR INSERT
+WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS "Brugere kan opdatere egne progressionslogs" ON public.progress_logs;
+CREATE POLICY "Brugere kan opdatere egne progressionslogs"
+ON public.progress_logs FOR UPDATE
+USING (user_id = auth.uid());
+
+-- TRIN 18: Opret RPC-funktioner til atomisk opdatering (upsert)
+CREATE OR REPLACE FUNCTION public.increment_study_minutes(minutes_to_add integer)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  INSERT INTO public.progress_logs (user_id, date, minutes)
+  VALUES (auth.uid(), CURRENT_DATE, minutes_to_add)
+  ON CONFLICT (user_id, date)
+  DO UPDATE SET minutes = progress_logs.minutes + minutes_to_add;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.increment_notes_created()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  INSERT INTO public.progress_logs (user_id, date, notes_created)
+  VALUES (auth.uid(), CURRENT_DATE, 1)
+  ON CONFLICT (user_id, date)
+  DO UPDATE SET notes_created = progress_logs.notes_created + 1;
+END;
+$$;
+
+
+-- -- SLUT PÅ SCRIPT --
+-- Kopiér alt ovenstående og kør det i din Supabase SQL Editor.
