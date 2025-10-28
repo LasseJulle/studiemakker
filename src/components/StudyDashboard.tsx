@@ -1,64 +1,227 @@
 import { useState, useEffect } from "react";
-import { useQuery, useAction, useMutation } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import { supabase } from "../lib/supabase";
+import { useAuth } from "../contexts/AuthContext";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { toast } from "sonner";
 
+interface Overview {
+  totalNotes: number;
+  averageGrade: number | null;
+  totalPlans: number;
+  planProgress: number;
+  recentNotes: any[];
+  activePlans: any[];
+}
+
+interface ProgressSummary {
+  totalMinutes: number;
+  streak: number;
+  sessionsPerDay: number;
+  dailyData: { date: string; minutes: number }[];
+}
+
 export default function StudyDashboard() {
+  const { user, profile } = useAuth();
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(0);
   const [progressRange, setProgressRange] = useState<"week" | "month" | "all">("week");
   const [selectedSubject, setSelectedSubject] = useState("");
-  const [gradeEstimate, setGradeEstimate] = useState<any>(null);
-  const [isLoadingGrade, setIsLoadingGrade] = useState(false);
-
-  const loggedInUser = useQuery(api.auth.loggedInUser);
-  const hasSeenIntro = useQuery(api.stats.hasSeenIntro);
-  const overview = useQuery(api.stats.getOverview);
-  const subjects = useQuery(api.notes.getSubjects);
-  const progressSummary = useQuery(
-    api.progress.summary,
-    loggedInUser ? { userId: loggedInUser._id, range: progressRange } : "skip"
-  );
-
-  const markIntroSeen = useMutation(api.stats.markIntroSeen);
-  const getGradeEstimate = useAction(api.mentor.gradeEstimate);
-  const logStudySession = useMutation(api.progress.logStudySession);
+  const [subjects, setSubjects] = useState<string[]>([]);
+  const [overview, setOverview] = useState<Overview | null>(null);
+  const [progressSummary, setProgressSummary] = useState<ProgressSummary | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (hasSeenIntro === false) {
+    if (profile && !profile.has_seen_intro) {
       setShowOnboarding(true);
     }
-  }, [hasSeenIntro]);
+  }, [profile]);
 
-  const handleCompleteOnboarding = async () => {
-    setShowOnboarding(false);
-    await markIntroSeen();
-    toast.success("Velkommen til StudyBuddy! 🎉");
+  useEffect(() => {
+    if (user) {
+      fetchAllData();
+    }
+  }, [user, progressRange]);
+
+  const fetchAllData = async () => {
+    if (!user) return;
+
+    setLoading(true);
+    try {
+      await Promise.all([
+        fetchOverview(),
+        fetchSubjects(),
+        fetchProgressSummary()
+      ]);
+    } catch (error) {
+      console.error('Error fetching dashboard data:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleGetGradeEstimate = async () => {
-    if (!selectedSubject || !loggedInUser) return;
+  const fetchOverview = async () => {
+    if (!user) return;
 
-    setIsLoadingGrade(true);
+    // Fetch all data in parallel
+    const [notesResult, plansResult] = await Promise.all([
+      supabase.from('notes').select('*').eq('user_id', user.id),
+      supabase.from('study_plans').select('*').eq('user_id', user.id)
+    ]);
+
+    const notes = notesResult.data || [];
+    const plans = plansResult.data || [];
+
+    // Calculate statistics
+    const totalNotes = notes.length;
+    const averageGrade = notes.filter(n => n.grade).length > 0
+      ? notes.filter(n => n.grade).reduce((sum, n) => sum + n.grade, 0) / notes.filter(n => n.grade).length
+      : null;
+
+    const totalPlans = plans.length;
+    const planProgress = plans.length > 0
+      ? Math.round(plans.reduce((sum, plan) => {
+          const completed = plan.tasks.filter((t: any) => t.completed).length;
+          return sum + (completed / plan.tasks.length * 100);
+        }, 0) / plans.length)
+      : 0;
+
+    // Recent notes (last 5)
+    const recentNotes = notes
+      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+      .slice(0, 5);
+
+    // Active plans (plans within date range with progress < 100%)
+    const now = Date.now();
+    const activePlans = plans
+      .filter(plan => plan.start_date <= now && plan.end_date >= now)
+      .map(plan => ({
+        ...plan,
+        progress: Math.round((plan.tasks.filter((t: any) => t.completed).length / plan.tasks.length) * 100)
+      }))
+      .slice(0, 5);
+
+    setOverview({
+      totalNotes,
+      averageGrade,
+      totalPlans,
+      planProgress,
+      recentNotes,
+      activePlans
+    });
+  };
+
+  const fetchSubjects = async () => {
+    if (!user) return;
+
+    const { data, error } = await supabase
+      .from('notes')
+      .select('category')
+      .eq('user_id', user.id)
+      .not('category', 'is', null);
+
+    if (!error && data) {
+      const uniqueSubjects = [...new Set(data.map(d => d.category).filter(Boolean))];
+      setSubjects(uniqueSubjects as string[]);
+    }
+  };
+
+  const fetchProgressSummary = async () => {
+    if (!user) return;
+
+    const now = new Date();
+    let startDate: Date;
+
+    if (progressRange === 'week') {
+      startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    } else if (progressRange === 'month') {
+      startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    } else {
+      startDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+    }
+
+    const { data, error } = await supabase
+      .from('progress_logs')
+      .select('*')
+      .eq('user_id', user.id)
+      .gte('date', startDate.toISOString().split('T')[0])
+      .order('date', { ascending: true });
+
+    if (error || !data) {
+      console.error('Error fetching progress:', error);
+      return;
+    }
+
+    // Calculate stats
+    const totalMinutes = data.reduce((sum, log) => sum + log.minutes, 0);
+
+    // Calculate streak
+    const dates = [...new Set(data.map(log => log.date))].sort().reverse();
+    let streak = 0;
+    const today = new Date().toISOString().split('T')[0];
+
+    for (let i = 0; i < dates.length; i++) {
+      const expectedDate = new Date(now.getTime() - i * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      if (dates[i] === expectedDate) {
+        streak++;
+      } else {
+        break;
+      }
+    }
+
+    const sessionsPerDay = dates.length > 0 ? data.length / dates.length : 0;
+
+    // Aggregate by date for chart
+    const dailyMap = new Map<string, number>();
+    data.forEach(log => {
+      dailyMap.set(log.date, (dailyMap.get(log.date) || 0) + log.minutes);
+    });
+
+    const dailyData = Array.from(dailyMap.entries())
+      .map(([date, minutes]) => ({ date, minutes }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    setProgressSummary({
+      totalMinutes,
+      streak,
+      sessionsPerDay,
+      dailyData
+    });
+  };
+
+  const handleCompleteOnboarding = async () => {
+    if (!user) return;
+
     try {
-      const estimate = await getGradeEstimate({
-        userId: loggedInUser._id,
-        subject: selectedSubject,
-      });
-      setGradeEstimate(estimate);
+      await supabase
+        .from('profiles')
+        .update({ has_seen_intro: true })
+        .eq('id', user.id);
+
+      setShowOnboarding(false);
+      toast.success("Velkommen til StudyBuddy! 🎉");
     } catch (error) {
-      toast.error("Kunne ikke estimere karakter");
-    } finally {
-      setIsLoadingGrade(false);
+      console.error('Error marking intro as seen:', error);
     }
   };
 
   const handleLogStudySession = async (minutes: number) => {
+    if (!user) return;
+
     try {
-      await logStudySession({ minutes });
+      await supabase
+        .from('progress_logs')
+        .insert({
+          user_id: user.id,
+          minutes,
+          activity_type: 'study',
+          date: new Date().toISOString().split('T')[0]
+        });
+
+      await fetchProgressSummary();
       toast.success(`${minutes} minutters studietid logget! 📚`);
     } catch (error) {
+      console.error('Error logging study session:', error);
       toast.error("Kunne ikke logge studietid");
     }
   };
@@ -72,7 +235,7 @@ export default function StudyDashboard() {
     return { text: "F", color: "bg-gray-600" };
   };
 
-  if (!loggedInUser || !overview) {
+  if (!user || loading || !overview) {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-400"></div>
@@ -149,25 +312,25 @@ export default function StudyDashboard() {
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={progressSummary.dailyData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                    <XAxis 
-                      dataKey="date" 
+                    <XAxis
+                      dataKey="date"
                       stroke="#9CA3AF"
                       tickFormatter={(value) => new Date(value).toLocaleDateString('da-DK', { month: 'short', day: 'numeric' })}
                     />
                     <YAxis stroke="#9CA3AF" />
-                    <Tooltip 
-                      contentStyle={{ 
-                        backgroundColor: '#1F2937', 
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: '#1F2937',
                         border: '1px solid #374151',
                         borderRadius: '8px',
                         color: '#F3F4F6'
                       }}
                       labelFormatter={(value) => new Date(value).toLocaleDateString('da-DK')}
                     />
-                    <Line 
-                      type="monotone" 
-                      dataKey="minutes" 
-                      stroke="#3B82F6" 
+                    <Line
+                      type="monotone"
+                      dataKey="minutes"
+                      stroke="#3B82F6"
                       strokeWidth={2}
                       dot={{ fill: '#3B82F6', strokeWidth: 2, r: 4 }}
                     />
@@ -177,74 +340,6 @@ export default function StudyDashboard() {
             )}
           </div>
         )}
-
-        {/* Grade Estimate */}
-        <div className="mb-8 bg-gray-800 rounded-lg p-6 border border-gray-700">
-          <h2 className="text-xl font-semibold text-white mb-4">🎯 Karakterestimat</h2>
-          
-          <div className="flex flex-wrap gap-3 mb-4">
-            <select
-              value={selectedSubject}
-              onChange={(e) => setSelectedSubject(e.target.value)}
-              className="px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">Vælg fag...</option>
-              {subjects?.map((subject) => (
-                <option key={subject} value={subject}>
-                  {subject}
-                </option>
-              ))}
-            </select>
-            <button
-              onClick={handleGetGradeEstimate}
-              disabled={!selectedSubject || isLoadingGrade}
-              className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 transition-colors"
-            >
-              {isLoadingGrade ? "Analyserer..." : "Estimer karakter"}
-            </button>
-          </div>
-
-          {gradeEstimate && (
-            <div className="bg-gray-700 rounded-lg p-4">
-              <div className="flex items-center space-x-4 mb-4">
-                <div className={`px-3 py-1 rounded-full text-white font-bold ${getGradeBadge(gradeEstimate.grade).color}`}>
-                  {getGradeBadge(gradeEstimate.grade).text}
-                </div>
-                <div>
-                  <div className="text-lg font-semibold text-white">{gradeEstimate.grade}/12</div>
-                  <div className="text-sm text-gray-400">{gradeEstimate.confidence}% sikkerhed</div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div>
-                  <h4 className="font-medium text-green-400 mb-2">💪 Styrker</h4>
-                  <ul className="text-sm text-gray-300 space-y-1">
-                    {gradeEstimate.strengths.map((strength: string, index: number) => (
-                      <li key={index}>• {strength}</li>
-                    ))}
-                  </ul>
-                </div>
-                <div>
-                  <h4 className="font-medium text-red-400 mb-2">⚠️ Mangler</h4>
-                  <ul className="text-sm text-gray-300 space-y-1">
-                    {gradeEstimate.gaps.map((gap: string, index: number) => (
-                      <li key={index}>• {gap}</li>
-                    ))}
-                  </ul>
-                </div>
-                <div>
-                  <h4 className="font-medium text-blue-400 mb-2">📋 Næste skridt</h4>
-                  <ul className="text-sm text-gray-300 space-y-1">
-                    {gradeEstimate.nextSteps.map((step: string, index: number) => (
-                      <li key={index}>• {step}</li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
 
         {/* Stats Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
@@ -263,10 +358,10 @@ export default function StudyDashboard() {
               <div>
                 <p className="text-sm font-medium text-gray-400">Gennemsnitskarakter</p>
                 <p className={`text-2xl font-bold ${
-                  overview.averageGrade && overview.averageGrade >= 7 ? 'text-green-400' : 
+                  overview.averageGrade && overview.averageGrade >= 7 ? 'text-green-400' :
                   overview.averageGrade && overview.averageGrade >= 4 ? 'text-yellow-400' : 'text-red-400'
                 }`}>
-                  {overview.averageGrade ? `${overview.averageGrade}/10` : 'N/A'}
+                  {overview.averageGrade ? `${overview.averageGrade.toFixed(1)}/10` : 'N/A'}
                 </p>
               </div>
               <div className="text-3xl">⭐</div>
@@ -289,7 +384,7 @@ export default function StudyDashboard() {
                 <p className="text-sm font-medium text-gray-400">Fremgang</p>
                 <div className="flex items-center space-x-2">
                   <p className={`text-2xl font-bold ${
-                    overview.planProgress >= 70 ? 'text-green-400' : 
+                    overview.planProgress >= 70 ? 'text-green-400' :
                     overview.planProgress >= 40 ? 'text-yellow-400' : 'text-red-400'
                   }`}>
                     {overview.planProgress}%
@@ -307,7 +402,7 @@ export default function StudyDashboard() {
             <h3 className="text-lg font-semibold text-white mb-4">📚 Seneste Noter</h3>
             <div className="space-y-3">
               {overview.recentNotes.map((note: any) => (
-                <div key={note._id} className="flex items-center justify-between p-3 bg-gray-700 rounded-lg">
+                <div key={note.id} className="flex items-center justify-between p-3 bg-gray-700 rounded-lg">
                   <div>
                     <p className="font-medium text-white">{note.title}</p>
                     <p className="text-sm text-gray-400">{note.category || 'Ingen kategori'}</p>
@@ -329,13 +424,13 @@ export default function StudyDashboard() {
             <h3 className="text-lg font-semibold text-white mb-4">🎯 Aktive Planer</h3>
             <div className="space-y-3">
               {overview.activePlans.map((plan: any) => (
-                <div key={plan._id} className="p-3 bg-gray-700 rounded-lg">
+                <div key={plan.id} className="p-3 bg-gray-700 rounded-lg">
                   <div className="flex items-center justify-between mb-2">
                     <p className="font-medium text-white">{plan.title}</p>
                     <span className="text-sm text-gray-400">{plan.progress}%</span>
                   </div>
                   <div className="w-full bg-gray-600 rounded-full h-2">
-                    <div 
+                    <div
                       className="bg-purple-600 h-2 rounded-full transition-all duration-300"
                       style={{ width: `${plan.progress}%` }}
                     />
@@ -395,7 +490,7 @@ function OnboardingModal({ step, onNext, onComplete }: {
           <div className="text-6xl mb-4">{currentSlide.emoji}</div>
           <h3 className="text-xl font-semibold text-white mb-4">{currentSlide.title}</h3>
           <p className="text-gray-300 mb-6">{currentSlide.content}</p>
-          
+
           <div className="flex justify-center space-x-2 mb-6">
             {slides.map((_, index) => (
               <div
@@ -406,7 +501,7 @@ function OnboardingModal({ step, onNext, onComplete }: {
               />
             ))}
           </div>
-          
+
           <button
             onClick={isLastSlide ? onComplete : onNext}
             className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
