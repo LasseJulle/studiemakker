@@ -46,8 +46,30 @@ export default function StudyPlans() {
   };
 
   const handleCreatePlan = async (data: any) => {
+    if (!user) return;
+
     try {
-      await createPlan(data);
+      const tasksWithIds = data.tasks.map((task: any, idx: number) => ({
+        ...task,
+        id: `task-${Date.now()}-${idx}`,
+        completed: false
+      }));
+
+      const { error } = await supabase
+        .from('study_plans')
+        .insert({
+          user_id: user.id,
+          title: data.title,
+          description: data.description || null,
+          subject: data.subject,
+          start_date: data.startDate,
+          end_date: data.endDate,
+          tasks: tasksWithIds
+        });
+
+      if (error) throw error;
+
+      await fetchPlans();
       setShowCreateForm(false);
       toast.success("Studieplan oprettet!");
     } catch (error: any) {
@@ -57,7 +79,27 @@ export default function StudyPlans() {
 
   const handleToggleTask = async (planId: string, taskId: string, completed: boolean) => {
     try {
-      await updateTask({ planId: planId as any, taskId, completed });
+      const plan = studyPlans.find(p => p.id === planId);
+      if (!plan) return;
+
+      const updatedTasks = plan.tasks.map(task =>
+        task.id === taskId ? { ...task, completed } : task
+      );
+
+      const { error } = await supabase
+        .from('study_plans')
+        .update({
+          tasks: updatedTasks,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', planId);
+
+      if (error) throw error;
+
+      await fetchPlans();
+      if (selectedPlan?.id === planId) {
+        setSelectedPlan({ ...plan, tasks: updatedTasks });
+      }
       toast.success(completed ? "Opgave markeret som færdig!" : "Opgave markeret som ikke færdig");
     } catch (error: any) {
       toast.error(error.message || "Kunne ikke opdatere opgave");
@@ -68,14 +110,24 @@ export default function StudyPlans() {
     if (!confirm("Slet denne studieplan?")) return;
 
     try {
-      await deletePlan({ planId: planId as any });
+      const { error } = await supabase
+        .from('study_plans')
+        .delete()
+        .eq('id', planId);
+
+      if (error) throw error;
+
+      await fetchPlans();
+      if (selectedPlan?.id === planId) {
+        setSelectedPlan(null);
+      }
       toast.success("Studieplan slettet!");
     } catch (error: any) {
       toast.error(error.message || "Kunne ikke slette studieplan");
     }
   };
 
-  if (!loggedInUser) {
+  if (!user || loading) {
     return <div>Indlæser...</div>;
   }
 
