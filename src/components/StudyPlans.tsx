@@ -414,7 +414,7 @@ function PlanCard({ plan, onClick, onDelete }: {
         <button
           onClick={(e) => {
             e.stopPropagation();
-            onDelete(plan._id);
+            onDelete(plan.id);
           }}
           className="text-gray-400 hover:text-red-600"
         >
