@@ -1,22 +1,46 @@
 import { useState, useEffect } from "react";
-import { useQuery, useMutation } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import { supabase } from "../lib/supabase";
+import { useAuth } from "../contexts/AuthContext";
 import { toast } from "sonner";
 
+interface Note {
+  id: string;
+  title: string;
+  content: string;
+  category: string | null;
+  tags: string[] | null;
+}
+
 export default function ExamMode() {
+  const { user } = useAuth();
   const [isActive, setIsActive] = useState(false);
   const [timeLeft, setTimeLeft] = useState(0);
   const [selectedNotes, setSelectedNotes] = useState<string[]>([]);
   const [examDuration, setExamDuration] = useState(120); // minutes
   const [showSetup, setShowSetup] = useState(true);
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const loggedInUser = useQuery(api.auth.loggedInUser);
-  const notes = useQuery(
-    api.notes.getNotesByUser,
-    loggedInUser ? { userId: loggedInUser._id } : "skip"
-  );
+  useEffect(() => {
+    const fetchNotes = async () => {
+      if (!user) return;
 
-  const logStudySession = useMutation(api.progress.logStudySession);
+      const { data, error } = await supabase
+        .from('notes')
+        .select('id, title, content, category, tags')
+        .eq('user_id', user.id)
+        .order('updated_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching notes:', error);
+      } else {
+        setNotes(data || []);
+      }
+      setLoading(false);
+    };
+
+    fetchNotes();
+  }, [user]);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
