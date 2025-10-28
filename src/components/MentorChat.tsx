@@ -1,16 +1,14 @@
 import { useState, useRef, useEffect } from "react";
-import { useQuery, useAction } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import { supabase } from "../lib/supabase";
+import { useAuth } from "../contexts/AuthContext";
 import { toast } from "sonner";
 
 export default function MentorChat() {
+  const { user } = useAuth();
   const [messages, setMessages] = useState<any[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  const loggedInUser = useQuery(api.auth.loggedInUser);
-  const askMentor = useAction(api.mentor.askMentor);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
