@@ -89,7 +89,7 @@ export default function MentorChat() {
     }]);
   };
 
-  if (!loggedInUser) {
+  if (!user) {
     return <div>Indlæser...</div>;
   }
 
