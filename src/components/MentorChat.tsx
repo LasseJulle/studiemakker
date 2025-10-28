@@ -32,7 +32,7 @@ export default function MentorChat() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isLoading || !loggedInUser) return;
+    if (!input.trim() || isLoading || !user) return;
 
     const userMessage = {
       id: Date.now().toString(),
@@ -42,34 +42,38 @@ export default function MentorChat() {
     };
 
     setMessages(prev => [...prev, userMessage]);
+    const userInput = input.trim();
     setInput("");
     setIsLoading(true);
 
     try {
-      const response = await askMentor({
-        userId: loggedInUser._id,
-        message: input.trim(),
-        context: messages.slice(-5) // Last 5 messages for context
+      const { data, error } = await supabase.functions.invoke('mentor-chat', {
+        body: {
+          message: userInput,
+          context: messages.slice(-5) // Last 5 messages for context
+        }
       });
+
+      if (error) throw error;
 
       const assistantMessage = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: response.response,
+        content: data.response,
         timestamp: Date.now()
       };
 
       setMessages(prev => [...prev, assistantMessage]);
     } catch (error: any) {
       toast.error(error.message || "Kunne ikke få svar fra mentoren");
-      
+
       const errorMessage = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
         content: 'Beklager, jeg kunne ikke behandle dit spørgsmål lige nu. Prøv igen senere.',
         timestamp: Date.now()
       };
-      
+
       setMessages(prev => [...prev, errorMessage]);
     } finally {
       setIsLoading(false);
