@@ -446,14 +446,14 @@ function PlanCard({ plan, onClick, onDelete }: {
         <div className="flex justify-between items-center text-sm text-gray-500">
           <span>{completedTasks}/{totalTasks} opgaver</span>
           <span>
-            {isOverdue ? "Forsinket" : 
-             isActive ? "Aktiv" : 
-             plan.startDate > Date.now() ? "Kommende" : "Færdig"}
+            {isOverdue ? "Forsinket" :
+             isActive ? "Aktiv" :
+             plan.start_date > Date.now() ? "Kommende" : "Færdig"}
           </span>
         </div>
 
         <div className="mt-2 text-xs text-gray-400">
-          {new Date(plan.startDate).toLocaleDateString('da-DK')} - {new Date(plan.endDate).toLocaleDateString('da-DK')}
+          {new Date(plan.start_date).toLocaleDateString('da-DK')} - {new Date(plan.end_date).toLocaleDateString('da-DK')}
         </div>
       </div>
     </div>
