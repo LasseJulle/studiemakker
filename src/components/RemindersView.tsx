@@ -190,11 +190,11 @@ export default function RemindersView() {
         {filteredReminders.length > 0 ? (
           filteredReminders.map((reminder) => (
             <ReminderCard
-              key={reminder._id}
+              key={reminder.id}
               reminder={reminder}
               onComplete={handleComplete}
               onDelete={handleDelete}
-              onDownloadICS={downloadICS}
+              onDownloadICS={() => downloadICS(reminder)}
             />
           ))
         ) : (
