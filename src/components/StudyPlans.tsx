@@ -570,14 +570,14 @@ function PlanDetailView({ plan, onBack, onToggleTask, onDelete }: {
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Tidsplan</h3>
         <div className="flex items-center justify-between text-sm">
           <div>
-            <span className="font-medium">Start:</span> {new Date(plan.startDate).toLocaleDateString('da-DK')}
+            <span className="font-medium">Start:</span> {new Date(plan.start_date).toLocaleDateString('da-DK')}
           </div>
           <div>
-            <span className="font-medium">Slut:</span> {new Date(plan.endDate).toLocaleDateString('da-DK')}
+            <span className="font-medium">Slut:</span> {new Date(plan.end_date).toLocaleDateString('da-DK')}
           </div>
         </div>
         <div className="mt-2 text-xs text-gray-500">
-          Oprettet {formatTimeAgo(plan.createdAt)} • Sidst opdateret {formatTimeAgo(plan.updatedAt)}
+          Oprettet {formatTimeAgo(new Date(plan.created_at).getTime())} • Sidst opdateret {formatTimeAgo(new Date(plan.updated_at).getTime())}
         </div>
       </div>
     </div>
