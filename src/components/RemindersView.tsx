@@ -45,8 +45,23 @@ export default function RemindersView() {
   };
 
   const handleCreateReminder = async (data: any) => {
+    if (!user) return;
+
     try {
-      await createReminder(data);
+      const { error } = await supabase
+        .from('reminders')
+        .insert({
+          user_id: user.id,
+          title: data.title,
+          description: data.description || null,
+          when: data.when,
+          type: data.type,
+          completed: false
+        });
+
+      if (error) throw error;
+
+      await fetchReminders();
       setShowCreateForm(false);
       toast.success("Påmindelse oprettet!");
     } catch (error: any) {
@@ -56,7 +71,14 @@ export default function RemindersView() {
 
   const handleComplete = async (reminderId: string) => {
     try {
-      await completeReminder({ reminderId: reminderId as any });
+      const { error } = await supabase
+        .from('reminders')
+        .update({ completed: true })
+        .eq('id', reminderId);
+
+      if (error) throw error;
+
+      await fetchReminders();
       toast.success("Påmindelse markeret som færdig!");
     } catch (error: any) {
       toast.error(error.message || "Kunne ikke markere som færdig");
@@ -67,34 +89,49 @@ export default function RemindersView() {
     if (!confirm("Slet denne påmindelse?")) return;
 
     try {
-      await deleteReminder({ reminderId: reminderId as any });
+      const { error } = await supabase
+        .from('reminders')
+        .delete()
+        .eq('id', reminderId);
+
+      if (error) throw error;
+
+      await fetchReminders();
       toast.success("Påmindelse slettet!");
     } catch (error: any) {
       toast.error(error.message || "Kunne ikke slette påmindelse");
     }
   };
 
-  const downloadICS = async (reminderId: string) => {
-    try {
-      const icsData = await api.reminders.generateICS({ reminderId: reminderId as any });
-      if (icsData) {
-        const blob = new Blob([icsData.content], { type: icsData.mimeType });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = icsData.filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        toast.success("Kalender-fil downloadet!");
-      }
-    } catch (error: any) {
-      toast.error("Kunne ikke downloade kalender-fil");
-    }
+  const downloadICS = (reminder: Reminder) => {
+    const dtstart = new Date(reminder.when).toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+    const icsContent = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//StudyBuddy//Reminder//EN',
+      'BEGIN:VEVENT',
+      `UID:${reminder.id}@studybuddy.app`,
+      `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, '').split('.')[0]}Z`,
+      `DTSTART:${dtstart}`,
+      `SUMMARY:${reminder.title}`,
+      reminder.description ? `DESCRIPTION:${reminder.description}` : '',
+      'END:VEVENT',
+      'END:VCALENDAR'
+    ].filter(Boolean).join('\r\n');
+
+    const blob = new Blob([icsContent], { type: 'text/calendar' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${reminder.title.replace(/\s+/g, '_')}.ics`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success("Kalender-fil downloadet!");
   };
 
-  if (!loggedInUser) {
+  if (!user || loading) {
     return <div>Indlæser...</div>;
   }
 
