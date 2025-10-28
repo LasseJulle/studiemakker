@@ -1,35 +1,61 @@
-import { useState, useRef } from "react";
-import { useQuery, useMutation } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import { useState, useRef, useEffect } from "react";
+import { supabase } from "../lib/supabase";
+import { useAuth } from "../contexts/AuthContext";
 import { toast } from "sonner";
 import { formatTimeAgo } from "../lib/utils";
 
+interface FileRecord {
+  id: string;
+  user_id: string;
+  name: string;
+  type: string;
+  size: number;
+  storage_path: string;
+  note_id: string | null;
+  uploaded_at: string;
+}
+
 export default function FileManager() {
+  const { user } = useAuth();
   const [isUploading, setIsUploading] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
+  const [files, setFiles] = useState<FileRecord[]>([]);
+  const [loading, setLoading] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const loggedInUser = useQuery(api.auth.loggedInUser);
-  const files = useQuery(
-    api.files.list,
-    loggedInUser ? { userId: loggedInUser._id } : "skip"
-  );
+  useEffect(() => {
+    fetchFiles();
+  }, [user]);
 
-  const generateUploadUrl = useMutation(api.files.generateUploadUrl);
-  const saveFile = useMutation(api.files.save);
-  const deleteFile = useMutation(api.files.delete);
-  const getFileUrl = useMutation(api.files.getUrl);
+  const fetchFiles = async () => {
+    if (!user) return;
+
+    const { data, error } = await supabase
+      .from('files')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('uploaded_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching files:', error);
+    } else {
+      setFiles(data || []);
+    }
+    setLoading(false);
+  };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    if (files.length > 0) {
-      uploadFiles(files);
+    const selectedFiles = Array.from(e.target.files || []);
+    if (selectedFiles.length > 0) {
+      uploadFiles(selectedFiles);
     }
   };
 
   const uploadFiles = async (filesToUpload: File[]) => {
+    if (!user) return;
+
     setIsUploading(true);
-    
+
     try {
       for (const file of filesToUpload) {
         // Check file size (max 10MB)
@@ -38,33 +64,40 @@ export default function FileManager() {
           continue;
         }
 
-        // Generate upload URL
-        const uploadUrl = await generateUploadUrl();
+        // Generate unique file path
+        const fileExt = file.name.split('.').pop();
+        const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+        const filePath = `${user.id}/${fileName}`;
 
-        // Upload file
-        const result = await fetch(uploadUrl, {
-          method: "POST",
-          headers: { "Content-Type": file.type },
-          body: file,
-        });
+        // Upload to Supabase Storage
+        const { error: uploadError } = await supabase.storage
+          .from('files')
+          .upload(filePath, file, {
+            cacheControl: '3600',
+            upsert: false
+          });
 
-        if (!result.ok) {
-          throw new Error(`Upload failed for ${file.name}`);
-        }
+        if (uploadError) throw uploadError;
 
-        const { storageId } = await result.json();
+        // Save metadata to database
+        const { error: dbError } = await supabase
+          .from('files')
+          .insert({
+            user_id: user.id,
+            name: file.name,
+            type: file.type,
+            size: file.size,
+            storage_path: filePath
+          });
 
-        // Save file metadata
-        await saveFile({
-          name: file.name,
-          type: file.type,
-          size: file.size,
-          storageId,
-        });
+        if (dbError) throw dbError;
 
         toast.success(`${file.name} uploadet!`);
       }
+
+      await fetchFiles();
     } catch (error: any) {
+      console.error('Upload error:', error);
       toast.error(error.message || "Upload fejlede");
     } finally {
       setIsUploading(false);
@@ -74,36 +107,58 @@ export default function FileManager() {
     }
   };
 
-  const handleDelete = async (fileId: string, fileName: string) => {
+  const handleDelete = async (fileId: string, fileName: string, storagePath: string) => {
     if (!confirm(`Slet ${fileName}?`)) return;
 
     try {
-      await deleteFile({ fileId: fileId as any });
+      // Delete from storage
+      const { error: storageError } = await supabase.storage
+        .from('files')
+        .remove([storagePath]);
+
+      if (storageError) throw storageError;
+
+      // Delete from database
+      const { error: dbError } = await supabase
+        .from('files')
+        .delete()
+        .eq('id', fileId);
+
+      if (dbError) throw dbError;
+
+      await fetchFiles();
       toast.success("Fil slettet");
     } catch (error: any) {
+      console.error('Delete error:', error);
       toast.error(error.message || "Kunne ikke slette fil");
     }
   };
 
-  const handleDownload = async (file: any) => {
+  const handleDownload = async (file: FileRecord) => {
     try {
-      const url = await getFileUrl({ fileId: file._id });
-      if (url) {
+      const { data, error } = await supabase.storage
+        .from('files')
+        .createSignedUrl(file.storage_path, 60); // 60 second expiry
+
+      if (error) throw error;
+
+      if (data?.signedUrl) {
         const a = document.createElement("a");
-        a.href = url;
+        a.href = data.signedUrl;
         a.download = file.name;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
       }
     } catch (error: any) {
+      console.error('Download error:', error);
       toast.error("Kunne ikke downloade fil");
     }
   };
 
   const handleSelectFile = (fileId: string) => {
-    setSelectedFiles(prev => 
-      prev.includes(fileId) 
+    setSelectedFiles(prev =>
+      prev.includes(fileId)
         ? prev.filter(id => id !== fileId)
         : [...prev, fileId]
     );
@@ -115,9 +170,14 @@ export default function FileManager() {
 
     try {
       for (const fileId of selectedFiles) {
-        await deleteFile({ fileId: fileId as any });
+        const file = files.find(f => f.id === fileId);
+        if (file) {
+          await supabase.storage.from('files').remove([file.storage_path]);
+          await supabase.from('files').delete().eq('id', fileId);
+        }
       }
       setSelectedFiles([]);
+      await fetchFiles();
       toast.success(`${selectedFiles.length} filer slettet`);
     } catch (error: any) {
       toast.error("Kunne ikke slette filer");
@@ -143,7 +203,7 @@ export default function FileManager() {
     return '📁';
   };
 
-  if (!loggedInUser) {
+  if (!user || loading) {
     return <div>Indlæser...</div>;
   }
 
@@ -201,17 +261,17 @@ export default function FileManager() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {files.map((file) => (
             <div
-              key={file._id}
+              key={file.id}
               className={`bg-white rounded-lg shadow-sm border p-4 hover:shadow-md transition-shadow ${
-                selectedFiles.includes(file._id) ? "ring-2 ring-blue-500" : ""
+                selectedFiles.includes(file.id) ? "ring-2 ring-blue-500" : ""
               }`}
             >
               <div className="flex items-start justify-between mb-3">
                 <div className="flex items-center space-x-2">
                   <input
                     type="checkbox"
-                    checked={selectedFiles.includes(file._id)}
-                    onChange={() => handleSelectFile(file._id)}
+                    checked={selectedFiles.includes(file.id)}
+                    onChange={() => handleSelectFile(file.id)}
                     className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                   />
                   <span className="text-2xl">{getFileIcon(file.type)}</span>
@@ -225,7 +285,7 @@ export default function FileManager() {
                     ⬇️
                   </button>
                   <button
-                    onClick={() => handleDelete(file._id, file.name)}
+                    onClick={() => handleDelete(file.id, file.name, file.storage_path)}
                     className="text-red-600 hover:text-red-800 text-sm"
                     title="Slet"
                   >
@@ -237,13 +297,13 @@ export default function FileManager() {
               <h3 className="font-medium text-gray-900 mb-1 truncate" title={file.name}>
                 {file.name}
               </h3>
-              
+
               <div className="text-sm text-gray-500 space-y-1">
                 <div>{formatFileSize(file.size)}</div>
-                <div>Uploadet {formatTimeAgo(file.uploadedAt)}</div>
+                <div>Uploadet {formatTimeAgo(new Date(file.uploaded_at).getTime())}</div>
               </div>
 
-              {file.noteId && (
+              {file.note_id && (
                 <div className="mt-2">
                   <span className="inline-block px-2 py-1 text-xs bg-green-100 text-green-800 rounded">
                     Tilknyttet note
