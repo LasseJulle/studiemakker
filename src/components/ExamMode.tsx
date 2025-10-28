@@ -114,7 +114,7 @@ export default function ExamMode() {
     return "text-red-600";
   };
 
-  if (!loggedInUser) {
+  if (!user || loading) {
     return <div>Indlæser...</div>;
   }
 
