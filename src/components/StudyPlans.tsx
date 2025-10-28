@@ -1,22 +1,49 @@
-import { useState } from "react";
-import { useQuery, useMutation } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import { useState, useEffect } from "react";
+import { supabase } from "../lib/supabase";
+import { useAuth } from "../contexts/AuthContext";
 import { toast } from "sonner";
 import { formatTimeAgo } from "../lib/utils";
 
+interface StudyPlan {
+  id: string;
+  user_id: string;
+  title: string;
+  description: string | null;
+  subject: string;
+  start_date: number;
+  end_date: number;
+  tasks: any[];
+  created_at: string;
+  updated_at: string;
+}
+
 export default function StudyPlans() {
+  const { user } = useAuth();
   const [showCreateForm, setShowCreateForm] = useState(false);
-  const [selectedPlan, setSelectedPlan] = useState<any>(null);
+  const [selectedPlan, setSelectedPlan] = useState<StudyPlan | null>(null);
+  const [studyPlans, setStudyPlans] = useState<StudyPlan[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const loggedInUser = useQuery(api.auth.loggedInUser);
-  const studyPlans = useQuery(
-    api.studyPlans.list,
-    loggedInUser ? { userId: loggedInUser._id } : "skip"
-  );
+  useEffect(() => {
+    fetchPlans();
+  }, [user]);
 
-  const createPlan = useMutation(api.studyPlans.create);
-  const updateTask = useMutation(api.studyPlans.updateTask);
-  const deletePlan = useMutation(api.studyPlans.delete);
+  const fetchPlans = async () => {
+    if (!user) return;
+
+    const { data, error } = await supabase
+      .from('study_plans')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching study plans:', error);
+    } else {
+      setStudyPlans(data || []);
+    }
+    setLoading(false);
+  };
 
   const handleCreatePlan = async (data: any) => {
     try {
