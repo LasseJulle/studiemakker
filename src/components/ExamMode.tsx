@@ -261,8 +261,8 @@ export default function ExamMode() {
 
       {/* Notes Display */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {notes?.filter(note => selectedNotes.includes(note._id)).map((note) => (
-          <ExamNoteCard key={note._id} note={note} />
+        {notes?.filter(note => selectedNotes.includes(note.id)).map((note) => (
+          <ExamNoteCard key={note.id} note={note} />
         ))}
       </div>
 
