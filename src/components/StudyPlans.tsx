@@ -461,7 +461,7 @@ function PlanCard({ plan, onClick, onDelete }: {
 }
 
 function PlanDetailView({ plan, onBack, onToggleTask, onDelete }: {
-  plan: any;
+  plan: StudyPlan;
   onBack: () => void;
   onToggleTask: (planId: string, taskId: string, completed: boolean) => void;
   onDelete: (id: string) => void;
