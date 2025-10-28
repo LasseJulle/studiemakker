@@ -1,24 +1,48 @@
-import { useState } from "react";
-import { useQuery, useMutation } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import { useState, useEffect } from "react";
+import { supabase } from "../lib/supabase";
+import { useAuth } from "../contexts/AuthContext";
 import { toast } from "sonner";
 import { formatTimeAgo } from "../lib/utils";
 
+interface Reminder {
+  id: string;
+  user_id: string;
+  title: string;
+  description: string | null;
+  when: number;
+  type: 'study' | 'review' | 'exam' | 'deadline';
+  completed: boolean;
+  note_id: string | null;
+  created_at: string;
+}
+
 export default function RemindersView() {
+  const { user } = useAuth();
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [filter, setFilter] = useState<"all" | "upcoming" | "completed">("upcoming");
+  const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const loggedInUser = useQuery(api.auth.loggedInUser);
-  const reminders = useQuery(
-    api.reminders.list,
-    loggedInUser ? { 
-      upcoming: filter === "upcoming",
-    } : "skip"
-  );
+  useEffect(() => {
+    fetchReminders();
+  }, [user]);
 
-  const createReminder = useMutation(api.reminders.create);
-  const completeReminder = useMutation(api.reminders.complete);
-  const deleteReminder = useMutation(api.reminders.deleteReminder);
+  const fetchReminders = async () => {
+    if (!user) return;
+
+    const { data, error } = await supabase
+      .from('reminders')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('when', { ascending: true });
+
+    if (error) {
+      console.error('Error fetching reminders:', error);
+    } else {
+      setReminders(data || []);
+    }
+    setLoading(false);
+  };
 
   const handleCreateReminder = async (data: any) => {
     try {
