@@ -541,7 +541,7 @@ function PlanDetailView({ plan, onBack, onToggleTask, onDelete }: {
               <input
                 type="checkbox"
                 checked={task.completed}
-                onChange={(e) => onToggleTask(plan._id, task.id, e.target.checked)}
+                onChange={(e) => onToggleTask(plan.id, task.id, e.target.checked)}
                 className="mt-1 h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded"
               />
               <div className="flex-1">
