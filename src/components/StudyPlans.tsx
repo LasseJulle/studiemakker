@@ -391,7 +391,7 @@ function CreatePlanForm({ onSubmit, onCancel }: {
 }
 
 function PlanCard({ plan, onClick, onDelete }: {
-  plan: any;
+  plan: StudyPlan;
   onClick: () => void;
   onDelete: (id: string) => void;
 }) {
@@ -399,8 +399,8 @@ function PlanCard({ plan, onClick, onDelete }: {
   const totalTasks = plan.tasks.length;
   const progress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
-  const isActive = plan.startDate <= Date.now() && plan.endDate >= Date.now();
-  const isOverdue = plan.endDate < Date.now() && progress < 100;
+  const isActive = plan.start_date <= Date.now() && plan.end_date >= Date.now();
+  const isOverdue = plan.end_date < Date.now() && progress < 100;
 
   return (
     <div className={`bg-white rounded-lg shadow-sm border p-6 cursor-pointer hover:shadow-md transition-shadow ${
