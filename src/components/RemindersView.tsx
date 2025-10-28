@@ -321,10 +321,10 @@ function ReminderForm({ onSubmit, onCancel }: {
 }
 
 function ReminderCard({ reminder, onComplete, onDelete, onDownloadICS }: {
-  reminder: any;
+  reminder: Reminder;
   onComplete: (id: string) => void;
   onDelete: (id: string) => void;
-  onDownloadICS: (id: string) => void;
+  onDownloadICS: () => void;
 }) {
   const isOverdue = reminder.when < Date.now() && !reminder.completed;
   const isUpcoming = reminder.when > Date.now() && reminder.when < Date.now() + 24 * 60 * 60 * 1000;
@@ -338,54 +338,51 @@ function ReminderCard({ reminder, onComplete, onDelete, onDownloadICS }: {
 
   return (
     <div className={`bg-white rounded-lg shadow-sm border p-4 ${
-      isOverdue ? "border-red-200 bg-red-50" : 
+      isOverdue ? "border-red-200 bg-red-50" :
       isUpcoming ? "border-yellow-200 bg-yellow-50" :
       reminder.completed ? "border-gray-200 bg-gray-50" : "border-gray-200"
     }`}>
       <div className="flex justify-between items-start">
         <div className="flex-1">
           <div className="flex items-center space-x-2 mb-2">
-            <span className="text-lg">{typeEmojis[reminder.type as keyof typeof typeEmojis]}</span>
+            <span className="text-lg">{typeEmojis[reminder.type]}</span>
             <h3 className={`font-semibold ${reminder.completed ? "text-gray-500 line-through" : "text-gray-900"}`}>
               {reminder.title}
             </h3>
             {isOverdue && <span className="px-2 py-1 text-xs bg-red-100 text-red-800 rounded">Forsinket</span>}
             {isUpcoming && <span className="px-2 py-1 text-xs bg-yellow-100 text-yellow-800 rounded">I dag</span>}
           </div>
-          
+
           {reminder.description && (
             <p className="text-gray-600 text-sm mb-2">{reminder.description}</p>
           )}
-          
+
           <div className="flex items-center space-x-4 text-sm text-gray-500">
             <span>📅 {new Date(reminder.when).toLocaleString('da-DK')}</span>
-            {reminder.noteTitle && (
-              <span>📝 {reminder.noteTitle}</span>
-            )}
           </div>
         </div>
 
         <div className="flex space-x-2">
           <button
-            onClick={() => onDownloadICS(reminder._id)}
+            onClick={onDownloadICS}
             className="text-blue-600 hover:text-blue-800 text-sm"
             title="Download til kalender"
           >
             📅
           </button>
-          
+
           {!reminder.completed && (
             <button
-              onClick={() => onComplete(reminder._id)}
+              onClick={() => onComplete(reminder.id)}
               className="text-green-600 hover:text-green-800 text-sm"
               title="Marker som færdig"
             >
               ✓
             </button>
           )}
-          
+
           <button
-            onClick={() => onDelete(reminder._id)}
+            onClick={() => onDelete(reminder.id)}
             className="text-red-600 hover:text-red-800 text-sm"
             title="Slet"
           >
