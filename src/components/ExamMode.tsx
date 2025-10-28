@@ -76,10 +76,21 @@ export default function ExamMode() {
 
   const handleEndExam = async () => {
     const studiedMinutes = Math.round((examDuration * 60 - timeLeft) / 60);
-    if (studiedMinutes > 0) {
-      await logStudySession({ minutes: studiedMinutes });
+    if (studiedMinutes > 0 && user) {
+      try {
+        await supabase
+          .from('progress_logs')
+          .insert({
+            user_id: user.id,
+            minutes: studiedMinutes,
+            activity_type: 'exam',
+            date: new Date().toISOString().split('T')[0]
+          });
+      } catch (error) {
+        console.error('Error logging study session:', error);
+      }
     }
-    
+
     setIsActive(false);
     setShowSetup(true);
     setSelectedNotes([]);
