@@ -170,7 +170,7 @@ export default function StudyPlans() {
         {studyPlans && studyPlans.length > 0 ? (
           studyPlans.map((plan) => (
             <PlanCard
-              key={plan._id}
+              key={plan.id}
               plan={plan}
               onClick={() => setSelectedPlan(plan)}
               onDelete={handleDeletePlan}
