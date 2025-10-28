@@ -489,7 +489,7 @@ function PlanDetailView({ plan, onBack, onToggleTask, onDelete }: {
           <p className="text-gray-600">{plan.subject}</p>
         </div>
         <button
-          onClick={() => onDelete(plan._id)}
+          onClick={() => onDelete(plan.id)}
           className="text-red-600 hover:text-red-800"
         >
           🗑️ Slet plan
