@@ -1,22 +1,46 @@
 import { useState, useEffect } from "react";
-import { useQuery, useMutation } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import { supabase } from "../lib/supabase";
+import { useAuth } from "../contexts/AuthContext";
 import { toast } from "sonner";
 
+interface Note {
+  id: string;
+  title: string;
+  content: string;
+  category: string | null;
+  tags: string[] | null;
+}
+
 export default function ExamMode() {
+  const { user } = useAuth();
   const [isActive, setIsActive] = useState(false);
   const [timeLeft, setTimeLeft] = useState(0);
   const [selectedNotes, setSelectedNotes] = useState<string[]>([]);
   const [examDuration, setExamDuration] = useState(120); // minutes
   const [showSetup, setShowSetup] = useState(true);
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const loggedInUser = useQuery(api.auth.loggedInUser);
-  const notes = useQuery(
-    api.notes.getNotesByUser,
-    loggedInUser ? { userId: loggedInUser._id } : "skip"
-  );
+  useEffect(() => {
+    const fetchNotes = async () => {
+      if (!user) return;
 
-  const logStudySession = useMutation(api.progress.logStudySession);
+      const { data, error } = await supabase
+        .from('notes')
+        .select('id, title, content, category, tags')
+        .eq('user_id', user.id)
+        .order('updated_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching notes:', error);
+      } else {
+        setNotes(data || []);
+      }
+      setLoading(false);
+    };
+
+    fetchNotes();
+  }, [user]);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -52,10 +76,21 @@ export default function ExamMode() {
 
   const handleEndExam = async () => {
     const studiedMinutes = Math.round((examDuration * 60 - timeLeft) / 60);
-    if (studiedMinutes > 0) {
-      await logStudySession({ minutes: studiedMinutes });
+    if (studiedMinutes > 0 && user) {
+      try {
+        await supabase
+          .from('progress_logs')
+          .insert({
+            user_id: user.id,
+            minutes: studiedMinutes,
+            activity_type: 'exam',
+            date: new Date().toISOString().split('T')[0]
+          });
+      } catch (error) {
+        console.error('Error logging study session:', error);
+      }
     }
-    
+
     setIsActive(false);
     setShowSetup(true);
     setSelectedNotes([]);
@@ -79,7 +114,7 @@ export default function ExamMode() {
     return "text-red-600";
   };
 
-  if (!loggedInUser) {
+  if (!user || loading) {
     return <div>Indlæser...</div>;
   }
 
@@ -121,15 +156,15 @@ export default function ExamMode() {
                 {notes && notes.length > 0 ? (
                   <div className="divide-y divide-gray-200">
                     {notes.map((note) => (
-                      <label key={note._id} className="flex items-center p-3 hover:bg-gray-50 cursor-pointer">
+                      <label key={note.id} className="flex items-center p-3 hover:bg-gray-50 cursor-pointer">
                         <input
                           type="checkbox"
-                          checked={selectedNotes.includes(note._id)}
+                          checked={selectedNotes.includes(note.id)}
                           onChange={(e) => {
                             if (e.target.checked) {
-                              setSelectedNotes([...selectedNotes, note._id]);
+                              setSelectedNotes([...selectedNotes, note.id]);
                             } else {
-                              setSelectedNotes(selectedNotes.filter(id => id !== note._id));
+                              setSelectedNotes(selectedNotes.filter(id => id !== note.id));
                             }
                           }}
                           className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
@@ -226,8 +261,8 @@ export default function ExamMode() {
 
       {/* Notes Display */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {notes?.filter(note => selectedNotes.includes(note._id)).map((note) => (
-          <ExamNoteCard key={note._id} note={note} />
+        {notes?.filter(note => selectedNotes.includes(note.id)).map((note) => (
+          <ExamNoteCard key={note.id} note={note} />
         ))}
       </div>
 

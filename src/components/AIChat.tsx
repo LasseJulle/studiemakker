@@ -1,6 +1,5 @@
 import { useState } from "react";
-import { useAction } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import { supabase } from "../lib/supabase";
 import { toast } from "sonner";
 
 interface Message {
@@ -21,8 +20,6 @@ export default function AIChat() {
   ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  
-  const chatWithAI = useAction(api.ai.chatWithAI);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -36,36 +33,36 @@ export default function AIChat() {
     };
 
     setMessages(prev => [...prev, userMessage]);
+    const userInput = input.trim();
     setInput("");
     setIsLoading(true);
 
     try {
-      const response = await chatWithAI({ prompt: input.trim() });
-      
+      const { data, error } = await supabase.functions.invoke('chat-ai', {
+        body: { prompt: userInput }
+      });
+
+      if (error) throw error;
+
       const aiMessage: Message = {
         id: (Date.now() + 1).toString(),
-        content: response,
+        content: data.response,
         isUser: false,
         timestamp: Date.now(),
       };
-      
+
       setMessages(prev => [...prev, aiMessage]);
     } catch (error: any) {
-      if (error.name === 'AbortError') {
-        // Ignore AbortError as requested
-        return;
-      }
-      
       console.error("AI chat error:", error);
       toast.error("Failed to get AI response. Please try again.");
-      
+
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         content: "I'm sorry, I'm having trouble responding right now. Please try again in a moment.",
         isUser: false,
         timestamp: Date.now(),
       };
-      
+
       setMessages(prev => [...prev, errorMessage]);
     } finally {
       setIsLoading(false);
@@ -108,7 +105,7 @@ export default function AIChat() {
               </div>
             </div>
           ))}
-          
+
           {isLoading && (
             <div className="flex justify-start">
               <div className="bg-gray-100 text-gray-900 max-w-xs lg:max-w-md px-4 py-2 rounded-lg">

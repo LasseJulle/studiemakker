@@ -1,26 +1,75 @@
-import { useState } from "react";
-import { useQuery, useMutation } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import { useState, useEffect } from "react";
+import { supabase } from "../lib/supabase";
+import { useAuth } from "../contexts/AuthContext";
 import { toast } from "sonner";
 import { formatTimeAgo } from "../lib/utils";
 
+interface StudyPlan {
+  id: string;
+  user_id: string;
+  title: string;
+  description: string | null;
+  subject: string;
+  start_date: number;
+  end_date: number;
+  tasks: any[];
+  created_at: string;
+  updated_at: string;
+}
+
 export default function StudyPlans() {
+  const { user } = useAuth();
   const [showCreateForm, setShowCreateForm] = useState(false);
-  const [selectedPlan, setSelectedPlan] = useState<any>(null);
+  const [selectedPlan, setSelectedPlan] = useState<StudyPlan | null>(null);
+  const [studyPlans, setStudyPlans] = useState<StudyPlan[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const loggedInUser = useQuery(api.auth.loggedInUser);
-  const studyPlans = useQuery(
-    api.studyPlans.list,
-    loggedInUser ? { userId: loggedInUser._id } : "skip"
-  );
+  useEffect(() => {
+    fetchPlans();
+  }, [user]);
 
-  const createPlan = useMutation(api.studyPlans.create);
-  const updateTask = useMutation(api.studyPlans.updateTask);
-  const deletePlan = useMutation(api.studyPlans.delete);
+  const fetchPlans = async () => {
+    if (!user) return;
+
+    const { data, error } = await supabase
+      .from('study_plans')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching study plans:', error);
+    } else {
+      setStudyPlans(data || []);
+    }
+    setLoading(false);
+  };
 
   const handleCreatePlan = async (data: any) => {
+    if (!user) return;
+
     try {
-      await createPlan(data);
+      const tasksWithIds = data.tasks.map((task: any, idx: number) => ({
+        ...task,
+        id: `task-${Date.now()}-${idx}`,
+        completed: false
+      }));
+
+      const { error } = await supabase
+        .from('study_plans')
+        .insert({
+          user_id: user.id,
+          title: data.title,
+          description: data.description || null,
+          subject: data.subject,
+          start_date: data.startDate,
+          end_date: data.endDate,
+          tasks: tasksWithIds
+        });
+
+      if (error) throw error;
+
+      await fetchPlans();
       setShowCreateForm(false);
       toast.success("Studieplan oprettet!");
     } catch (error: any) {
@@ -30,7 +79,27 @@ export default function StudyPlans() {
 
   const handleToggleTask = async (planId: string, taskId: string, completed: boolean) => {
     try {
-      await updateTask({ planId: planId as any, taskId, completed });
+      const plan = studyPlans.find(p => p.id === planId);
+      if (!plan) return;
+
+      const updatedTasks = plan.tasks.map(task =>
+        task.id === taskId ? { ...task, completed } : task
+      );
+
+      const { error } = await supabase
+        .from('study_plans')
+        .update({
+          tasks: updatedTasks,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', planId);
+
+      if (error) throw error;
+
+      await fetchPlans();
+      if (selectedPlan?.id === planId) {
+        setSelectedPlan({ ...plan, tasks: updatedTasks });
+      }
       toast.success(completed ? "Opgave markeret som færdig!" : "Opgave markeret som ikke færdig");
     } catch (error: any) {
       toast.error(error.message || "Kunne ikke opdatere opgave");
@@ -41,14 +110,24 @@ export default function StudyPlans() {
     if (!confirm("Slet denne studieplan?")) return;
 
     try {
-      await deletePlan({ planId: planId as any });
+      const { error } = await supabase
+        .from('study_plans')
+        .delete()
+        .eq('id', planId);
+
+      if (error) throw error;
+
+      await fetchPlans();
+      if (selectedPlan?.id === planId) {
+        setSelectedPlan(null);
+      }
       toast.success("Studieplan slettet!");
     } catch (error: any) {
       toast.error(error.message || "Kunne ikke slette studieplan");
     }
   };
 
-  if (!loggedInUser) {
+  if (!user || loading) {
     return <div>Indlæser...</div>;
   }
 
@@ -91,7 +170,7 @@ export default function StudyPlans() {
         {studyPlans && studyPlans.length > 0 ? (
           studyPlans.map((plan) => (
             <PlanCard
-              key={plan._id}
+              key={plan.id}
               plan={plan}
               onClick={() => setSelectedPlan(plan)}
               onDelete={handleDeletePlan}
@@ -312,7 +391,7 @@ function CreatePlanForm({ onSubmit, onCancel }: {
 }
 
 function PlanCard({ plan, onClick, onDelete }: {
-  plan: any;
+  plan: StudyPlan;
   onClick: () => void;
   onDelete: (id: string) => void;
 }) {
@@ -320,8 +399,8 @@ function PlanCard({ plan, onClick, onDelete }: {
   const totalTasks = plan.tasks.length;
   const progress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
-  const isActive = plan.startDate <= Date.now() && plan.endDate >= Date.now();
-  const isOverdue = plan.endDate < Date.now() && progress < 100;
+  const isActive = plan.start_date <= Date.now() && plan.end_date >= Date.now();
+  const isOverdue = plan.end_date < Date.now() && progress < 100;
 
   return (
     <div className={`bg-white rounded-lg shadow-sm border p-6 cursor-pointer hover:shadow-md transition-shadow ${
@@ -335,7 +414,7 @@ function PlanCard({ plan, onClick, onDelete }: {
         <button
           onClick={(e) => {
             e.stopPropagation();
-            onDelete(plan._id);
+            onDelete(plan.id);
           }}
           className="text-gray-400 hover:text-red-600"
         >
@@ -367,14 +446,14 @@ function PlanCard({ plan, onClick, onDelete }: {
         <div className="flex justify-between items-center text-sm text-gray-500">
           <span>{completedTasks}/{totalTasks} opgaver</span>
           <span>
-            {isOverdue ? "Forsinket" : 
-             isActive ? "Aktiv" : 
-             plan.startDate > Date.now() ? "Kommende" : "Færdig"}
+            {isOverdue ? "Forsinket" :
+             isActive ? "Aktiv" :
+             plan.start_date > Date.now() ? "Kommende" : "Færdig"}
           </span>
         </div>
 
         <div className="mt-2 text-xs text-gray-400">
-          {new Date(plan.startDate).toLocaleDateString('da-DK')} - {new Date(plan.endDate).toLocaleDateString('da-DK')}
+          {new Date(plan.start_date).toLocaleDateString('da-DK')} - {new Date(plan.end_date).toLocaleDateString('da-DK')}
         </div>
       </div>
     </div>
@@ -382,7 +461,7 @@ function PlanCard({ plan, onClick, onDelete }: {
 }
 
 function PlanDetailView({ plan, onBack, onToggleTask, onDelete }: {
-  plan: any;
+  plan: StudyPlan;
   onBack: () => void;
   onToggleTask: (planId: string, taskId: string, completed: boolean) => void;
   onDelete: (id: string) => void;
@@ -410,7 +489,7 @@ function PlanDetailView({ plan, onBack, onToggleTask, onDelete }: {
           <p className="text-gray-600">{plan.subject}</p>
         </div>
         <button
-          onClick={() => onDelete(plan._id)}
+          onClick={() => onDelete(plan.id)}
           className="text-red-600 hover:text-red-800"
         >
           🗑️ Slet plan
@@ -462,7 +541,7 @@ function PlanDetailView({ plan, onBack, onToggleTask, onDelete }: {
               <input
                 type="checkbox"
                 checked={task.completed}
-                onChange={(e) => onToggleTask(plan._id, task.id, e.target.checked)}
+                onChange={(e) => onToggleTask(plan.id, task.id, e.target.checked)}
                 className="mt-1 h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded"
               />
               <div className="flex-1">
@@ -491,14 +570,14 @@ function PlanDetailView({ plan, onBack, onToggleTask, onDelete }: {
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Tidsplan</h3>
         <div className="flex items-center justify-between text-sm">
           <div>
-            <span className="font-medium">Start:</span> {new Date(plan.startDate).toLocaleDateString('da-DK')}
+            <span className="font-medium">Start:</span> {new Date(plan.start_date).toLocaleDateString('da-DK')}
           </div>
           <div>
-            <span className="font-medium">Slut:</span> {new Date(plan.endDate).toLocaleDateString('da-DK')}
+            <span className="font-medium">Slut:</span> {new Date(plan.end_date).toLocaleDateString('da-DK')}
           </div>
         </div>
         <div className="mt-2 text-xs text-gray-500">
-          Oprettet {formatTimeAgo(plan.createdAt)} • Sidst opdateret {formatTimeAgo(plan.updatedAt)}
+          Oprettet {formatTimeAgo(new Date(plan.created_at).getTime())} • Sidst opdateret {formatTimeAgo(new Date(plan.updated_at).getTime())}
         </div>
       </div>
     </div>

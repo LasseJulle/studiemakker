@@ -4,19 +4,23 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "npm-run-all --parallel dev:frontend dev:backend",
-    "dev:frontend": "vite --open",
-    "dev:backend": "convex dev",
+    "dev": "vite --open",
     "build": "vite build",
-    "lint": "tsc -p convex -noEmit --pretty false && tsc -p . -noEmit --pretty false && convex dev --once && vite build"
+    "lint": "tsc -p . -noEmit --pretty false",
+    "supabase:start": "supabase start",
+    "supabase:stop": "supabase stop",
+    "supabase:status": "supabase status",
+    "supabase:gen-types": "supabase gen types typescript --local > src/types/database.types.ts"
   },
   "dependencies": {
-    "@convex-dev/auth": "^0.0.80",
+    "@supabase/supabase-js": "^2.40.0",
     "clsx": "^2.1.1",
-    "convex": "^1.24.2",
+    "lucide-react": "^0.344.0",
     "openai": "^6.7.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-is": "^19.2.0",
+    "react-router-dom": "^6.22.0",
     "recharts": "^3.3.0",
     "sonner": "^2.0.3",
     "tailwind-merge": "^3.1.0"
